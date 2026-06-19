@@ -1,4 +1,30 @@
-__pycache__
-.venv
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# --- Secrets & personal data (NEVER commit) ---
+# Your real config (passport no., application id, Gmail app password) lives here.
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+secrets.json
+credentials.json
+
+# --- Local run artifacts (contain your visa status / local paths) ---
 status_record.json
+status_record.json.*
+.status_*.tmp
+logs/
+*.log
+
+# --- Generated launchd plists (embed an absolute path = your macOS username) ---
+# Only the *.plist.template files are tracked.
+scheduling/*.plist
+
+# --- macOS ---
+.DS_Store

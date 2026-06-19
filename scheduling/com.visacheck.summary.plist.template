@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.visacheck.summary</string>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO__</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO__/.venv/bin/python</string>
+        <string>run_check.py</string>
+        <string>--summary</string>
+        <string>--jitter</string>
+        <string>900</string>
+    </array>
+
+    <!-- Nightly summary at 21:00: always emails the current status (with the
+         comparison), and on a query failure emails a heartbeat instead. -->
+    <key>StartCalendarInterval</key>
+    <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__REPO__/logs/visacheck.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO__/logs/visacheck.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

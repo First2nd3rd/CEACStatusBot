@@ -1,3 +1,5 @@
+import random
+import time
 from smtplib import SMTP_SSL
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -7,6 +9,7 @@ from .handle import NotificationHandle
 from .format import build_body, build_subject
 
 SMTP_TIMEOUT = 30
+SMTP_ATTEMPTS = 3  # retry transient network/proxy/wake hiccups before giving up
 
 
 class EmailNotificationHandle(NotificationHandle):
@@ -33,13 +36,25 @@ class EmailNotificationHandle(NotificationHandle):
         msg['To'] = ";".join(self.__toEmail)
         msg.attach(MIMEText(mail_content, 'plain', 'utf-8'))
 
-        try:
-            with SMTP_SSL(self.__hostAddress, self.__hostPort, timeout=SMTP_TIMEOUT) as smtp:
-                smtp.login(self.__fromEmail, self.__emailPassword)
-                refused = smtp.sendmail(self.__fromEmail, self.__toEmail, msg.as_string())
-        except Exception as e:
-            print(f"[email] send FAILED: {e}")
-            raise
+        # Retry a few times so a brief timeout (network/proxy/just-woke-from-sleep)
+        # doesn't lose the email or fail the whole run.
+        refused: dict = {}
+        last_error: Exception | None = None
+        for attempt in range(1, SMTP_ATTEMPTS + 1):
+            try:
+                with SMTP_SSL(self.__hostAddress, self.__hostPort, timeout=SMTP_TIMEOUT) as smtp:
+                    smtp.login(self.__fromEmail, self.__emailPassword)
+                    refused = smtp.sendmail(self.__fromEmail, self.__toEmail, msg.as_string())
+                last_error = None
+                break
+            except Exception as e:  # noqa: BLE001 - transient; retry then re-raise
+                last_error = e
+                print(f"[email] send attempt {attempt}/{SMTP_ATTEMPTS} failed: {e}")
+                if attempt < SMTP_ATTEMPTS:
+                    time.sleep(random.uniform(3, 6))
+
+        if last_error is not None:
+            raise last_error
 
         if refused:
             print(f"[email] some recipients refused: {refused}")

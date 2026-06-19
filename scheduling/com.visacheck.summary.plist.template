@@ -13,8 +13,9 @@
         <string>__REPO__/.venv/bin/python</string>
         <string>run_check.py</string>
         <string>--summary</string>
+        <string>--scheduled</string>
         <string>--jitter</string>
-        <string>900</string>
+        <string>120</string>
     </array>
 
     <!-- Nightly summary at 21:00: always emails the current status (with the

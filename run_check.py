@@ -43,11 +43,17 @@ def main() -> None:
         type=int,
         default=0,
         metavar="SECONDS",
-        help="Sleep a random 0..SECONDS before querying, so scheduled runs don't hit CEAC on an exact clock tick.",
+        help="Max random delay (seconds) before querying. Only applied together with --scheduled.",
+    )
+    parser.add_argument(
+        "--scheduled",
+        action="store_true",
+        help="Marks an automatic launchd run; enables the --jitter delay. Manual runs omit this and start immediately.",
     )
     args = parser.parse_args()
 
-    if args.jitter > 0:
+    # Jitter only on automatic scheduled runs — a manual run/restart starts now.
+    if args.scheduled and args.jitter > 0:
         delay = random.randint(0, args.jitter)
         print(f"Jitter: sleeping {delay}s before querying...")
         time.sleep(delay)

@@ -56,8 +56,9 @@ class NotificationManager:
                     "success": False,
                     "application_num_origin": self.__number,
                     "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "reason_key": res.get("reason_key"),
                 })
-            raise RuntimeError("Query status failed, no status retrieved.")
+            raise RuntimeError(f"Query status failed: {res.get('reason', 'no status retrieved')}")
 
         current_status = res["status"]
         current_last_updated = res["case_last_updated"]

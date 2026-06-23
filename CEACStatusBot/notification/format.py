@@ -65,14 +65,38 @@ def _comparison_block(result: dict) -> list[str]:
     return lines
 
 
+REASON_ZH = {
+    "wrong_captcha": "验证码连续识别失败",
+    "blocked": "疑似被 CEAC 拦截(HTTP 403)",
+    "rate_limited": "请求过于频繁被限流(HTTP 429)",
+    "server_error": "CEAC 服务器故障或维护",
+    "http_error": "CEAC 返回异常响应",
+    "empty_page": "页面异常,疑似被拦截或服务中断",
+    "no_status": "页面未返回状态,可能验证码错或网站改版",
+    "captcha_missing": "验证码图片缺失,疑似被拦截或网站改版",
+    "location_missing": "页面结构异常,疑似被拦截或网站改版",
+    "case_mismatch": "返回的申请号与查询不一致",
+    "date_missing": "拿到状态但缺少日期,疑似网站改版",
+    "network_timeout": "网络超时(CEAC 较慢或你的网络/代理)",
+    "connection_failed": "连接失败(网络/代理/DNS,不一定是被封)",
+    "config": "配置有误,请检查 LOCATION 设置",
+    "unknown": "未知错误",
+}
+
+
 def _failure_body(result: dict) -> str:
     sep = "=" * 42
-    return "\n".join([
+    lines = [
         "美国签证状态查询失败 (CEAC NIV)",
         sep,
         "",
         f"申请号  :{result.get('application_num_origin', '')}",
         f"查询时间:{result.get('time', '')}",
+    ]
+    reason_zh = REASON_ZH.get(result.get("reason_key"))
+    if reason_zh:
+        lines.append(f"可能原因:{reason_zh}")
+    lines += [
         "",
         "本次自动查询未能成功(可能是 CEAC 临时不可用、验证码连续识别失败或网络问题)。",
         "工具仍在运行,会在下一个计划时间自动重试。",
@@ -80,7 +104,8 @@ def _failure_body(result: dict) -> str:
         "",
         sep,
         "本邮件由本地 visacheck 工具自动发送。",
-    ])
+    ]
+    return "\n".join(lines)
 
 
 def build_body(result: dict) -> str:

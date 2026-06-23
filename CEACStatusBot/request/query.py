@@ -10,18 +10,73 @@ from CEACStatusBot.captcha import CaptchaHandle, OnnxCaptchaHandle
 # never wedge the scheduled job forever.
 HTTP_TIMEOUT = (10, 30)
 
+MAX_ATTEMPTS = 5
+
 CAPTCHA_IMG_ID = "c_status_ctl00_contentplaceholder1_defaultcaptcha_CaptchaImage"
 STATUS_PREFIX = "ctl00_ContentPlaceHolder1_ucApplicationStatusView_"
+
+# Stable failure-reason keys. query/manager render these to English for the log;
+# format.py renders the same keys to the user's language for the email.
+REASON_TEXT = {
+    "wrong_captcha": "likely wrong captcha (form returned without a status)",
+    "blocked": "blocked/forbidden (HTTP 403) — possible IP or proxy block",
+    "rate_limited": "rate-limited (HTTP 429) — possible block from too many requests",
+    "server_error": "CEAC server error or maintenance (HTTP 5xx)",
+    "http_error": "unexpected HTTP response from CEAC",
+    "empty_page": "unexpected short/empty page — possible block or outage",
+    "no_status": "no status on the page — likely wrong captcha or a CEAC-side change",
+    "captcha_missing": "captcha image missing — possible block or CEAC-side change",
+    "location_missing": "location dropdown missing — possible block or CEAC-side change",
+    "case_mismatch": "returned case number did not match",
+    "date_missing": "status found but date missing — likely a CEAC-side change",
+    "network_timeout": "network timeout — CEAC slow or your connection/proxy",
+    "connection_failed": "connection failed — network/proxy/DNS issue (not necessarily a block)",
+    "config": "configuration problem",
+    "unknown": "unexpected error",
+}
+
+
+def _classify_no_status(resp) -> str:
+    """Best-effort reason key for a request that came back without a status, so
+    the log can tell a wrong captcha apart from a block or a CEAC-side outage."""
+    code = resp.status_code
+    if code == 403:
+        return "blocked"
+    if code == 429:
+        return "rate_limited"
+    if code in (500, 502, 503, 504):
+        return "server_error"
+    if code != 200:
+        return "http_error"
+    body = (resp.text or "").lower()
+    if "defaultcaptcha" in body or "captcha" in body:
+        return "wrong_captcha"
+    if len(body) < 500:
+        return "empty_page"
+    return "no_status"
+
+
+def _dominant_reason(reasons: list[str]) -> str:
+    """The reason key seen most often across attempts (for the final summary)."""
+    if not reasons:
+        return "unknown"
+    return max(set(reasons), key=reasons.count)
 
 
 def query_status(location, application_num, passport_number, surname, captchaHandle: CaptchaHandle = OnnxCaptchaHandle("captcha.onnx")):
     result = {"success": False}
+    reasons: list[str] = []
 
-    for failCount in range(5):
+    def note(reason_key: str, detail: str = "") -> None:
+        msg = REASON_TEXT.get(reason_key, reason_key)
+        print(f"Attempt {failCount + 1}: {msg}{f' ({detail})' if detail else ''}")
+        reasons.append(reason_key)
+
+    for failCount in range(MAX_ATTEMPTS):
         if failCount > 0:
             # Randomised back-off so retries don't look like clockwork.
             backupTime = random.uniform(4, 9)
-            print(f"Retrying... Attempt {failCount + 1} / 5 in {backupTime:.1f}s")
+            print(f"Retrying... Attempt {failCount + 1} / {MAX_ATTEMPTS} in {backupTime:.1f}s")
             time.sleep(backupTime)
 
         try:
@@ -44,7 +99,7 @@ def query_status(location, application_num, passport_number, surname, captchaHan
             # Captcha image
             captcha = soup.find(name="img", id=CAPTCHA_IMG_ID)
             if captcha is None or not captcha.get("src"):
-                print("Captcha image not found on page; retrying.")
+                note(_classify_no_status(r) if r.status_code != 200 else "captcha_missing")
                 continue
             img_resp = session.get(ROOT + captcha["src"], timeout=HTTP_TIMEOUT)
             captcha_num = captchaHandle.solve(img_resp.content)
@@ -53,7 +108,7 @@ def query_status(location, application_num, passport_number, surname, captchaHan
             # Location dropdown -> the option value whose visible text contains `location`
             location_dropdown = soup.find("select", id="Location_Dropdown")
             if location_dropdown is None:
-                print("Location dropdown not found on page; retrying.")
+                note("location_missing")
                 continue
             location_value = None
             for option in location_dropdown.find_all("option"):
@@ -61,8 +116,12 @@ def query_status(location, application_num, passport_number, surname, captchaHan
                     location_value = option.get("value")
                     break
             if not location_value:
-                print(f"Location '{location}' not found in dropdown options.")
-                return {"success": False}
+                # Configuration problem, not a transient one — no point retrying.
+                return {
+                    "success": False,
+                    "reason_key": "config",
+                    "reason": f"location '{location}' not found in the dropdown — check your LOCATION setting",
+                }
 
             def update_from_current_page(cur_page, name, data):
                 ele = cur_page.find(name="input", attrs={"name": name})
@@ -104,17 +163,18 @@ def query_status(location, application_num, passport_number, surname, captchaHan
 
             status = text_of("lblStatus")
             if not status:
-                # Missing status span == wrong captcha / validation error page -> retry.
+                # No status span -> classify why (wrong captcha vs block vs outage).
+                note(_classify_no_status(r))
                 continue
 
             application_num_returned = text_of("lblCaseNo")
             if not application_num_returned or application_num_returned.strip() != application_num.strip():
-                print(f"Case number mismatch (got {application_num_returned!r}); retrying.")
+                note("case_mismatch", f"got {application_num_returned!r}")
                 continue
 
             case_last_updated = text_of("lblStatusDate")
             if not case_last_updated:
-                print("Status date missing; retrying.")
+                note("date_missing")
                 continue
 
             result.update({
@@ -130,8 +190,18 @@ def query_status(location, application_num, passport_number, surname, captchaHan
             })
             break
 
-        except Exception as e:  # noqa: BLE001 - any per-attempt failure should just retry
-            print(f"Attempt {failCount + 1} error: {e}")
+        except requests.exceptions.Timeout:
+            note("network_timeout")
+            continue
+        except requests.exceptions.ConnectionError:
+            note("connection_failed")
+            continue
+        except Exception as e:  # noqa: BLE001 - any other per-attempt failure should just retry
+            note("unknown", str(e))
             continue
 
+    if not result.get("success"):
+        key = _dominant_reason(reasons)
+        result["reason_key"] = key
+        result["reason"] = f"{REASON_TEXT.get(key, key)} ({reasons.count(key)}/{len(reasons)} attempts)"
     return result

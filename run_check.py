@@ -77,7 +77,15 @@ def main() -> None:
     else:
         print("Email not configured (FROM/TO/PASSWORD); will only log to console.")
 
-    res = manager.send(force_send=args.summary)
+    try:
+        res = manager.send(force_send=args.summary)
+    except RuntimeError as e:
+        # A transient query failure (usually a few captcha misreads, or a brief
+        # CEAC/network hiccup) is expected noise, not a crash. Log one clean line
+        # and exit normally so the scheduled job simply tries again next run,
+        # instead of dumping a Python traceback into the log.
+        print(f"Status check did not complete this run: {e} Will retry on the next scheduled run.")
+        return
 
     if args.do_print:
         print()
